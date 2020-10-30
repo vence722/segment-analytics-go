@@ -15,6 +15,8 @@ import (
 // Version of the client.
 const Version = "3.0.0"
 const unimplementedError = "not implemented"
+const UploadMaxAttempts = 360
+const UploadRetryInterval = 10 * time.Second
 
 // This interface is the main API exposed by the analytics package.
 // Values that satsify this interface are returned by the client constructors
@@ -245,14 +247,14 @@ func (c *client) sendAsync(msgs []message, wg *sync.WaitGroup, ex *executor) {
 
 // Send batch request.
 func (c *client) send(msgs []message) {
-	const attempts = 10
-
-	b, err := json.Marshal(batch{
+	batch := batch{
 		MessageId: c.uid(),
 		SentAt:    c.now(),
 		Messages:  msgs,
 		Context:   c.DefaultContext,
-	})
+	}
+
+	b, err := json.Marshal(batch)
 
 	if err != nil {
 		c.errorf("marshalling messages - %s", err)
@@ -260,15 +262,17 @@ func (c *client) send(msgs []message) {
 		return
 	}
 
-	for i := 0; i != attempts; i++ {
+	for i := 0; i != UploadMaxAttempts; i++ {
 		if err = c.upload(b); err == nil {
 			c.notifySuccess(msgs)
 			return
 		}
 
+		c.errorf("upload error: batchID=%s, attempts=%d, err=%s", batch.MessageId, i + 1, err.Error())
+
 		// Wait for either a retry timeout or the client to be closed.
 		select {
-		case <-time.After(c.RetryAfter(i)):
+		case <-time.After(UploadRetryInterval):
 		case <-c.quit:
 			c.errorf("%d messages dropped because they failed to be sent and the client was closed", len(msgs))
 			c.notifyFailure(msgs, err)
@@ -276,7 +280,7 @@ func (c *client) send(msgs []message) {
 		}
 	}
 
-	c.errorf("%d messages dropped because they failed to be sent after %d attempts", len(msgs), attempts)
+	c.errorf("%d messages dropped because they failed to be sent after %d attempts", len(msgs), UploadMaxAttempts)
 	c.notifyFailure(msgs, err)
 }
 
