@@ -1,4 +1,4 @@
-module github.com/segmentio/analytics-go
+module github.com/vence722/segment-analytics-go
 
 go 1.14
 
